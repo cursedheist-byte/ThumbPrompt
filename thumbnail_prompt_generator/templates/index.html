@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Thumbnail Prompt Generator</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+{% if not logged_in %}
+<!-- ==================================================================
+     LOGGED-OUT: login screen
+     ================================================================== -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">▶</span>
+      <span class="brand-name">ThumbPrompt</span>
+    </div>
+  </div>
+</header>
+
+<main class="wizard-shell">
+  <section class="card" id="loginCard" style="max-width:420px;margin:4rem auto;text-align:center;">
+    <h1>Sign in to ThumbPrompt</h1>
+    <p class="subtitle">Sign in with Google to generate thumbnail concepts and track your usage.</p>
+
+    {% if auth_error == "google_auth_failed" %}
+    <div class="card" style="background:#fdecea;color:#611a15;margin-bottom:1rem;">
+      Google sign-in didn't complete. Please try again.
+    </div>
+    {% elif auth_error == "google_not_configured" %}
+    <div class="card" style="background:#fdecea;color:#611a15;margin-bottom:1rem;">
+      Google sign-in isn't configured on this server yet.
+    </div>
+    {% endif %}
+
+    {% if google_oauth_configured %}
+    <a href="{{ url_for('auth_google') }}" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:0.5rem;justify-content:center;">
+      Continue with Google
+    </a>
+    {% else %}
+    <button type="button" class="btn btn-primary" disabled>Continue with Google</button>
+    <p class="hint">Google sign-in is not configured yet.</p>
+    {% endif %}
+  </section>
+</main>
+
+{% else %}
+<!-- ==================================================================
+     LOGGED-IN: existing wizard UI (unchanged), plus account controls
+     ================================================================== -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark">▶</span>
+      <span class="brand-name">ThumbPrompt</span>
+    </div>
+    <div class="usage-pill" id="usagePill">
+      <span id="usageLabel">{{ usage.plan_label }} · {{ usage.prompts_remaining }}/{{ usage.prompt_limit }} prompts left</span>
+      <button id="plansBtn" type="button" class="link-btn">Plans</button>
+    </div>
+    <div class="account-pill" id="accountPill">
+      {% if user.picture_url %}
+      <img src="{{ user.picture_url }}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:0.4rem;" />
+      {% endif %}
+      <span id="accountLabel">{{ user.name or user.email or 'Signed in' }}</span>
+      <a href="{{ url_for('logout') }}" class="link-btn">Log out</a>
+    </div>
+  </div>
+</header>
+
+<main class="wizard-shell">
+
+  <div class="stepper" id="stepper">
+    <div class="step-node" data-step="1"><span>1</span><label>Category</label></div>
+    <div class="step-node" data-step="2"><span>2</span><label>Details</label></div>
+    <div class="step-node" data-step="3"><span>3</span><label>Title</label></div>
+    <div class="step-node" data-step="4"><span>4</span><label>References</label></div>
+    <div class="step-node" data-step="5"><span>5</span><label>Concepts</label></div>
+    <div class="step-node" data-step="6"><span>6</span><label>Final Prompt</label></div>
+  </div>
+
+  <div class="card" id="errorBanner" style="display:none;"></div>
+
+  <!-- STEP 1: CATEGORY -->
+  <section class="card wizard-step" id="step-1" data-step="1">
+    <h1>What type of video is this?</h1>
+    <p class="subtitle">This shapes the rest of the questions we ask you.</p>
+    <div class="option-grid" id="categoryGrid">
+      {% for cat in categories %}
+      <button type="button" class="option-card" data-value="{{ cat.id }}" data-field="category">
+        {{ cat.label }}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="step-actions">
+      <span></span>
+      <button type="button" class="btn btn-primary" id="toStep2" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- STEP 2: CATEGORY-SPECIFIC DETAILS -->
+  <section class="card wizard-step" id="step-2" data-step="2" style="display:none;">
+    <div id="gamingOnlyBlock" style="display:none;">
+      <h1>Do you want yourself in the thumbnail?</h1>
+      <p class="subtitle">If yes, upload a face photo to use as an identity reference.</p>
+      <div class="option-grid two-col" id="faceChoiceGrid">
+        <button type="button" class="option-card" data-value="with_face" data-field="face_choice">With Face</button>
+        <button type="button" class="option-card" data-value="without_face" data-field="face_choice">Without Face</button>
+      </div>
+      <div id="faceUploadBlock" class="upload-block" style="display:none;">
+        <label class="upload-dropzone" for="faceImageInput">
+          <span id="faceUploadLabel">Click to upload a face/reference photo</span>
+          <input type="file" id="faceImageInput" accept="image/png,image/jpeg,image/webp" hidden />
+        </label>
+        <div class="preview-row" id="facePreviewRow"></div>
+        <p class="hint">This is only a visual reference for the AI — it won't be copied directly into the final image.</p>
+      </div>
+    </div>
+
+    <h1 id="topicQuestion">Which game?</h1>
+    <p class="subtitle" id="topicSubtitle">e.g. Minecraft, GTA V, Fortnite, Roblox</p>
+    <input type="text" id="topicInput" class="text-input" placeholder="Type here..." maxlength="120" />
+
+    <div class="step-actions">
+      <button type="button" class="btn btn-secondary" data-back="1">Back</button>
+      <button type="button" class="btn btn-primary" id="toStep3" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- STEP 3: TITLE -->
+  <section class="card wizard-step" id="step-3" data-step="3" style="display:none;">
+    <h1>What is your video title?</h1>
+    <p class="subtitle">Be specific — this is how the AI understands your video's core idea.</p>
+    <input type="text" id="titleInput" class="text-input" placeholder='e.g. "I Built the Biggest McDonald&#39;s in Minecraft"' maxlength="300" />
+    <div class="char-count"><span id="titleCharCount">0</span>/300</div>
+
+    <div class="step-actions">
+      <button type="button" class="btn btn-secondary" data-back="2">Back</button>
+      <button type="button" class="btn btn-primary" id="toStep4" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- STEP 4: REFERENCES + SPECIFIC ELEMENTS -->
+  <section class="card wizard-step" id="step-4" data-step="4" style="display:none;">
+    <h1>Do you have a reference thumbnail?</h1>
+    <p class="subtitle">Optional. We'll analyze its style for inspiration only — never copy it directly.</p>
+    <div class="upload-block">
+      <label class="upload-dropzone" for="refThumbInput">
+        <span id="refThumbUploadLabel">Click to upload a reference thumbnail</span>
+        <input type="file" id="refThumbInput" accept="image/png,image/jpeg,image/webp" hidden />
+      </label>
+      <div class="preview-row" id="refThumbPreviewRow"></div>
+    </div>
+
+    <h2>Is there anything specific you want in the thumbnail?</h2>
+    <p class="subtitle">e.g. a specific character, weapon, vehicle, building, item, enemy, location, or reaction.</p>
+    <textarea id="specificElementsInput" class="text-input textarea" rows="3" maxlength="1000" placeholder="Describe it here (optional)"></textarea>
+
+    <div class="upload-block">
+      <label class="upload-dropzone" for="specificElementInput">
+        <span id="specificElementUploadLabel">Click to upload a reference image of that element (optional)</span>
+        <input type="file" id="specificElementInput" accept="image/png,image/jpeg,image/webp" hidden />
+      </label>
+      <div class="preview-row" id="specificElementPreviewRow"></div>
+    </div>
+
+    <h2>Want specific text on the thumbnail?</h2>
+    <p class="subtitle">Leave blank and we won't add any text.</p>
+    <input type="text" id="wantsTextInput" class="text-input" placeholder="e.g. IMPOSSIBLE (optional)" maxlength="60" />
+
+    <div class="step-actions">
+      <button type="button" class="btn btn-secondary" data-back="3">Back</button>
+      <button type="button" class="btn btn-primary" id="toAnalyze">Generate Concepts</button>
+    </div>
+  </section>
+
+  <!-- STEP 5: AI ANALYSIS / CONCEPTS -->
+  <section class="card wizard-step" id="step-5" data-step="5" style="display:none;">
+    <div id="loadingConcepts" class="loading-state">
+      <div class="spinner"></div>
+      <p>Analyzing your video and drafting 3 thumbnail concepts...</p>
+      <!--
+        Processing ad slot (Free / expired-plan users only). Visibility is
+        set purely from server-computed usage.ads_enabled (see app.js:
+        updateProcessingAdSlots()) - never assumed true/false here. This
+        is a local-dev placeholder; to go live with Google AdSense later,
+        swap the inner <div class="ad-slot-placeholder"> for a real
+        <ins class="adsbygoogle" data-ad-client="..." data-ad-slot="...">
+        unit and leave the id="analyzeAdSlot" + display toggle as-is.
+      -->
+      <div
+        id="analyzeAdSlot"
+        class="ad-slot"
+        style="display:none;margin-top:16px;padding:14px;border:1px dashed #c9c9d6;border-radius:8px;text-align:center;color:#8a8a99;font-size:0.85rem;letter-spacing:0.05em;"
+      >ADVERTISEMENT</div>
+    </div>
+    <div id="conceptsContent" style="display:none;">
+      <h1>Choose a thumbnail concept</h1>
+      <p class="subtitle" id="videoUnderstanding"></p>
+      <div class="concept-grid" id="conceptGrid"></div>
+      <div class="step-actions">
+        <button type="button" class="btn btn-secondary" data-back="4">Back</button>
+        <button type="button" class="btn btn-primary" id="toFinalize" disabled>Generate Final Prompt</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 6: FINAL PROMPT -->
+  <section class="card wizard-step" id="step-6" data-step="6" style="display:none;">
+    <div id="loadingFinal" class="loading-state">
+      <div class="spinner"></div>
+      <p>Writing your production-ready image prompt...</p>
+      <!-- Same processing ad slot pattern as step 5 - see the comment
+           on #analyzeAdSlot above. -->
+      <div
+        id="finalizeAdSlot"
+        class="ad-slot"
+        style="display:none;margin-top:16px;padding:14px;border:1px dashed #c9c9d6;border-radius:8px;text-align:center;color:#8a8a99;font-size:0.85rem;letter-spacing:0.05em;"
+      >ADVERTISEMENT</div>
+    </div>
+    <div id="finalContent" style="display:none;">
+      <h1>Your final thumbnail prompt</h1>
+      <p class="subtitle">Copy this into ChatGPT, Midjourney, or any image generator.</p>
+      <div class="prompt-box">
+        <pre id="finalPromptText"></pre>
+        <button type="button" class="btn btn-primary" id="copyPromptBtn">Copy Prompt</button>
+      </div>
+
+      <details class="breakdown-details">
+        <summary>View full structured breakdown</summary>
+        <dl class="breakdown-list" id="breakdownList"></dl>
+      </details>
+
+      <div class="step-actions">
+        <button type="button" class="btn btn-secondary" id="regenerateBtn">Regenerate Final Prompt</button>
+        <button type="button" class="btn btn-primary" id="startOverBtn">Start Over</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-overlay" id="plansModal" style="display:none;">
+  <div class="modal">
+    <h2>Plans</h2>
+    <div class="plans-grid">
+      {% for id, plan in plans.items() %}
+      <div class="plan-card {{ 'active' if id == usage.plan else '' }}" data-plan-id="{{ id }}">
+        <h3>{{ plan.label }}</h3>
+        <p class="plan-price">{{ '₹' ~ plan.price_inr if plan.price_inr else 'Free' }}</p>
+        <p class="plan-limit">{{ plan.prompt_limit }} generations</p>
+        <p class="plan-validity">
+          {% if plan.validity_months %}Valid {{ plan.validity_months }} month{{ 's' if plan.validity_months != 1 else '' }}{% else %}No expiry{% endif %}
+        </p>
+        <p class="plan-ads">{{ 'Ads' if plan.ads_enabled else 'No ads' }}</p>
+        {% if id == 'free' %}
+        <button type="button" class="btn btn-secondary" disabled>{{ 'Current' if id == usage.plan else 'Free' }}</button>
+        {% else %}
+        <button
+          type="button"
+          class="btn btn-primary buy-plan-btn"
+          data-plan="{{ id }}"
+          {% if id == usage.plan %}disabled{% endif %}
+        >{{ 'Current plan' if id == usage.plan else '₹' ~ plan.price_inr ~ ' — Buy' }}</button>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="topup-section" id="topupSection" style="display:none;">
+      <h3>Top up generations</h3>
+      <p class="hint">₹{{ topup.price_inr }} per extra generation. Only available while a paid plan is active — a top-up expires together with that plan.</p>
+      <div class="topup-controls">
+        <input type="number" id="topupQuantity" class="text-input" min="1" max="{{ topup.max_quantity }}" value="1" style="max-width:100px;display:inline-block;" />
+        <button type="button" class="btn btn-primary" id="buyTopupBtn">Buy Top-up</button>
+      </div>
+    </div>
+
+    <p class="hint">Payments are processed securely by Razorpay (test mode).</p>
+    <button type="button" class="btn btn-secondary" id="closePlansModal">Close</button>
+  </div>
+</div>
+
+<script>
+  // Seeds the frontend with the server-rendered usage snapshot (e.g. so
+  // the top-up section's initial visibility matches the real
+  // topup_available flag without a round trip on page load).
+  window.__INITIAL_USAGE__ = {{ usage | tojson }};
+</script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% endif %}
+</body>
+</html>
